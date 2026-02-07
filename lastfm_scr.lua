@@ -1,3 +1,9 @@
+--[[
+mpv-lastfm-scrobbler
+version 0.5
+https://github.com/tsvtt/mpv-lastfm-scrobbler
+]]
+
 mp = require('mp')
 
 local SCR_FORMATS = {
@@ -111,20 +117,33 @@ function str_to_md5(str)
     ).stdout):match('^%S+')
 end
 
-function gen_sig(method, token, _sk, md)
+function repl_api_broken_chars(str)
+    --todo: guess it's not the only problematic character...
+    if str:find('&') then
+        str = str:gsub('&', ' ')
+    end
+    return str
+end
+
+
+---@param method string
+---@param token string
+---@param params table
+---@return string?
+function gen_sig(method, token, params)
     local sig = 'api_key' .. K
 
     if method == API_METHODS.getSession then
         sig = sig .. 'method' .. method .. 'token' .. token
     elseif method == API_METHODS.scrobble then
         sig =
-            'album[0]' .. md.album ..
+            'album[0]' .. params['album[0]'] ..
             sig ..
-            'artist[0]' .. md.artist ..
+            'artist[0]' .. params['artist[0]'] ..
             'method' .. method ..
-            'sk' .. _sk ..
-            'timestamp[0]' .. os.time() - SCR_SEC ..
-            'track[0]' .. md.title
+            'sk' .. sk ..
+            'timestamp[0]' .. params['timestamp[0]'] ..
+            'track[0]' .. params['track[0]']
     else
         logger.error('Incorrect method:', method)
         return
@@ -173,26 +192,24 @@ function file_ext() return filename():match('%.(%w+)$') end
 
 function scrobble()
     local md = extract_playmetadata()
-    local sig = gen_sig(API_METHODS.scrobble, nil, sk, md)
-    if empty(sig) or empty(md.artist) or empty(md.title) then
+    local api_params = {
+                ['album[0]'] = repl_api_broken_chars(md.album),
+                api_key = K,
+                method = API_METHODS.scrobble,
+                sk = sk,
+                ['artist[0]'] = repl_api_broken_chars(md.artist),
+                ['timestamp[0]'] = os.time() - SCR_SEC,
+                ['track[0]'] = repl_api_broken_chars(md.title),
+    }
+    api_params.api_sig = gen_sig(API_METHODS.scrobble, nil, api_params)
+    if empty(api_params.api_sig) or empty(md.artist) or empty(md.title) then
         logger.error("Can't scrobble: empty value among required values:",
-            'sig=', sig, ',artist=', md.artist, ',title=', md.title)
+            'sig=', api_params.api_sig, ',artist=', md.artist, ',title=', md.title)
         return
     end
     curl_post(
         SCR_URL,
-        table_to_urlencoded(
-            {
-                ['album[0]'] = md.album,
-                api_key = K,
-                api_sig = sig,
-                method = API_METHODS.scrobble,
-                sk = sk,
-                ['artist[0]'] = md.artist,
-                ['timestamp[0]'] = os.time() - SCR_SEC,
-                ['track[0]'] = md.title,
-            }
-        )
+        table_to_urlencoded(api_params)
     )
 end
 
@@ -334,6 +351,7 @@ function find_curl()
 end
 
 function main()
+    if not find_curl then return end
     read_conffile()
     if not sk then
         setup_userdata()
@@ -342,4 +360,4 @@ function main()
     end
 end
 
-_ = find_curl() and main()
+main()
