@@ -25,6 +25,9 @@ local JSON_VALUE_RE = '":%s?"([^"]+)'
 local uname, sk, timer
 local is_paused = false
 
+local IS_FILELOG_SCR = false
+local FILELOG_SCR = IS_FILELOG_SCR and io.open(SCRIPTS_DIR .. '/' .. '.scr.log', 'a')
+
 API_METHODS = {
     getSession = 'auth.getSession',
     getToken = 'auth.gettoken',
@@ -46,25 +49,27 @@ logger = {
     debug = function(...) logger._log('DEBUG', ...) end,
 }
 
+---@param md table
+function filelog_scr(md, logfile)
+    local f = logfile or FILELOG_SCR
+    f:write(os.date("%d-%m %H:%M:%S") .. ' ' .. md.artist .. ' - ' .. md.album .. ' - ' .. md.title .. '\n')
+    f:flush()
+end
+
 function trim(s)
     return s and s:match "^%s*(.*)":match "(.-)%s*$"
 end
 
 function empty(v)
-    return not v or v == ''
+    return not v or v:gsub('%s+', '') == ''
 end
 
+---@param res table
+---@return table
 function subpr_reporter(res)
-    if not res then return end
-    -- if not res or not res.status then return end  -- ??
-
-    if res.status == 0 then
-        logger.debug('Subpr stdout:', res.stdout)
-    elseif res.status then
-        logger.error('Subpr stdout:', res.stdout)
-        logger.error('Subpr stderr:', res.stderr)
-    else
-        logger.debug('Subpr ret code:', res.status)
+    logger.debug('Subpr stdout:', res.stdout)
+    if res.status ~= 0 then
+        if not empty(res.stderr) then logger.error('Subpr stderr:', res.stderr) end
     end
     return res
 end
@@ -86,20 +91,21 @@ function run_subpr_async(args, cb)
     return subpr_reporter(res)
 end
 
----@return string
+---@param url string
+---@return table
 function curl_get(url)
-    return run_subpr_sync({ 'curl', url }).stdout
+    return run_subpr_sync({ 'curl', url })
 end
 
 ---@param url string
 ---@param kv_pairs string
----@return string
+---@return table
 function curl_post(url, kv_pairs)
-    return run_subpr_sync({ 'curl', '-d', kv_pairs, url }).stdout
+    return run_subpr_sync({ 'curl', '-d', kv_pairs, url })
 end
 
 function api_fetch_token()
-    local resp_text = curl_get(URL_K .. '&method=' .. API_METHODS.getToken)
+    local resp_text = curl_get(URL_K .. '&method=' .. API_METHODS.getToken).stdout
     local token = resp_text and resp_text:match('token' .. JSON_VALUE_RE)
     logger.debug('Fetched token:', token)
     return token
@@ -167,8 +173,7 @@ end
 function api_fetch_session(token, sig)
     local url = URL_K .. '&method=' .. API_METHODS.getSession .. '&token=' .. token .. '&api_sig=' .. sig
     logger.debug('Requesting URL:', url)
-    local resp_text = curl_get(url)
-    return resp_text
+    return curl_get(url).stdout
 end
 
 function table_to_urlencoded(table)
@@ -201,16 +206,14 @@ function scrobble()
                 ['timestamp[0]'] = os.time() - SCR_SEC,
                 ['track[0]'] = repl_api_broken_chars(md.title),
     }
-    api_params.api_sig = gen_sig(API_METHODS.scrobble, nil, api_params)
+    api_params.api_sig = gen_sig(API_METHODS.scrobble, '', api_params)
     if empty(api_params.api_sig) or empty(md.artist) or empty(md.title) then
         logger.error("Can't scrobble: empty value among required values:",
             'sig=', api_params.api_sig, ',artist=', md.artist, ',title=', md.title)
         return
     end
-    curl_post(
-        SCR_URL,
-        table_to_urlencoded(api_params)
-    )
+    local res = curl_post(SCR_URL, table_to_urlencoded(api_params))
+    if res.status == 0 then filelog_scr(md) end
 end
 
 function set_scrobble_timer()
@@ -323,7 +326,7 @@ function setup_userdata()
         return
     end
 
-    local sig = gen_sig(API_METHODS.getSession, token)
+    local sig = gen_sig(API_METHODS.getSession, token, {})
     if not sig then
         logger.error('sig is nil')
         return
