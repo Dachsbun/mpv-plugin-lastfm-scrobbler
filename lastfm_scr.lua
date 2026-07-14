@@ -10,6 +10,9 @@ local SCR_FORMATS = {
     mp3 = true,
     flac = true,
     m4a = true,
+    ogg = true,
+    wav = true,
+    opus = true;
 }
 PLUGIN_NAME = 'lastfm_scr'
 SCR_URL = 'http://ws.audioscrobbler.com/2.0/?format=json'
@@ -137,6 +140,7 @@ function gen_sig(method, token, params)
         sig = sig .. 'method' .. method .. 'token' .. token
     elseif method == API_METHODS.scrobble then
         sig =
+            'albumArtist[0]' .. params['albumArtist[0]'] ..
             'album[0]' .. params['album[0]'] ..
             sig ..
             'artist[0]' .. params['artist[0]'] ..
@@ -184,6 +188,7 @@ function extract_playmetadata()
         artist = mp.get_property("metadata/by-key/artist") or '',
         title = mp.get_property("metadata/by-key/title") or '',
         album = mp.get_property("metadata/by-key/album") or '',
+        albumArtist = mp.get_property("metadata/by-key/album_artist") or mp.get_property("metadata/by-key/album artist") or '',
     }
 end
 
@@ -200,6 +205,7 @@ function scrobble()
                 ['artist[0]'] = repl_api_broken_chars(md.artist),
                 ['timestamp[0]'] = os.time() - SCR_SEC,
                 ['track[0]'] = repl_api_broken_chars(md.title),
+                ['albumArtist[0]'] = repl_api_broken_chars(md.albumArtist),
     }
     api_params.api_sig = gen_sig(API_METHODS.scrobble, nil, api_params)
     if empty(api_params.api_sig) or empty(md.artist) or empty(md.title) then
