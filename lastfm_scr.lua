@@ -1,6 +1,6 @@
 --[[
 mpv-lastfm-scrobbler
-version 0.5
+version 0.6
 https://github.com/tsvtt/mpv-lastfm-scrobbler
 ]]
 
@@ -20,7 +20,7 @@ SCRIPTS_DIR = mp.find_config_file('scripts')
 CONF_FILENAME = '.' .. PLUGIN_NAME .. '.conf'
 TMP_FILEPATH = '/tmp/' .. PLUGIN_NAME .. '.temp'
 CONF_FILEPATH = SCRIPTS_DIR .. '/'  .. CONF_FILENAME
-local SCR_SEC = 90
+local SCR_MIN = 20
 local JSON_VALUE_RE = '":%s?"([^"]+)'
 local uname, sk, timer
 local is_paused = false
@@ -195,7 +195,9 @@ end
 function filename() return mp.get_property('filename') end
 function file_ext() return filename():match('%.(%w+)$') end
 
-function scrobble()
+
+---@param timeout number
+function scrobble(timeout)
     local md = extract_playmetadata()
     local api_params = {
                 ['album[0]'] = repl_api_broken_chars(md.album),
@@ -203,7 +205,7 @@ function scrobble()
                 method = API_METHODS.scrobble,
                 sk = sk,
                 ['artist[0]'] = repl_api_broken_chars(md.artist),
-                ['timestamp[0]'] = os.time() - SCR_SEC,
+                ['timestamp[0]'] = os.time() - timeout,
                 ['track[0]'] = repl_api_broken_chars(md.title),
     }
     api_params.api_sig = gen_sig(API_METHODS.scrobble, '', api_params)
@@ -216,9 +218,23 @@ function scrobble()
     if res.status == 0 then filelog_scr(md) end
 end
 
+---@return number
+function calc_scr_timeout()
+    local SCR_SEC = 90
+    local dur = mp.get_property_number("duration")
+    if dur >= SCR_MIN and dur <= SCR_SEC then
+        return math.max(dur / 2, SCR_MIN)
+    elseif dur >= SCR_MIN and dur < SCR_SEC * 2 then
+        return dur / 2
+    else
+        return SCR_SEC
+    end
+end
+
 function set_scrobble_timer()
     if SCR_FORMATS[file_ext()] then
-        timer = mp.add_timeout(SCR_SEC, scrobble)
+        local timeout = calc_scr_timeout()
+        timer = mp.add_timeout(timeout, function() scrobble(timeout) end)
         if is_paused then
             timer:stop()
         end
