@@ -215,7 +215,7 @@ function scrobble(timeout)
         return
     end
     local res = curl_post(SCR_URL, table_to_urlencoded(api_params))
-    if res.status == 0 then filelog_scr(md) end
+    if IS_FILELOG_SCR and res.status == 0 then filelog_scr(md) end
 end
 
 ---@return number
