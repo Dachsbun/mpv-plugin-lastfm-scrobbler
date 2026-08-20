@@ -32,6 +32,7 @@ API_METHODS = {
     getSession = 'auth.getSession',
     getToken = 'auth.gettoken',
     scrobble = 'track.scrobble',
+    nowPlaying = 'track.updateNowPlaying'
 }
 
 subpr_cmd_table = {
@@ -143,7 +144,7 @@ function gen_sig(method, token, params)
         sig = sig .. 'method' .. method .. 'token' .. token
     elseif method == API_METHODS.scrobble then
         sig =
-			'albumArtist[0]' .. params['albumArtist[0]'] ..
+            'albumArtist[0]' .. params['albumArtist[0]'] ..
             'album[0]' .. params['album[0]'] ..
             sig ..
             'artist[0]' .. params['artist[0]'] ..
@@ -151,6 +152,15 @@ function gen_sig(method, token, params)
             'sk' .. sk ..
             'timestamp[0]' .. params['timestamp[0]'] ..
             'track[0]' .. params['track[0]']
+    elseif method == API_METHODS.nowPlaying then
+        sig =
+            'album' .. params['album'] ..
+            'albumArtist' .. params['albumArtist'] ..
+            sig ..
+            'artist' .. params['artist'] ..
+            'method' .. method ..
+            'sk' .. sk ..
+            'track' .. params['track']
     else
         logger.error('Incorrect method:', method)
         return
@@ -190,13 +200,34 @@ function extract_playmetadata()
         artist = mp.get_property("metadata/by-key/artist") or '',
         title = mp.get_property("metadata/by-key/title") or '',
         album = mp.get_property("metadata/by-key/album") or '',
-		albumArtist = mp.get_property("metadata/by-key/album_artist") or mp.get_property("metadata/by-key/album artist") or '',
+        albumArtist = mp.get_property("metadata/by-key/album_artist") or mp.get_property("metadata/by-key/album artist") or '',
     }
 end
 
 function filename() return mp.get_property('filename') end
 function file_ext() return filename():match('%.(%w+)$') end
 
+function nowPlaying()
+    -- basically copied from scrobble function, updates nowPlaying
+    local md = extract_playmetadata()
+	local api_params = {
+                ['album'] = repl_api_broken_chars(md.album),
+                api_key = K,
+                method = API_METHODS.nowPlaying,
+                sk = sk,
+                ['artist'] = repl_api_broken_chars(md.artist),
+                ['track'] = repl_api_broken_chars(md.title),
+                ['albumArtist'] = repl_api_broken_chars(md.albumArtist),
+    }
+    api_params.api_sig = gen_sig(API_METHODS.nowPlaying, '', api_params)
+    if empty(api_params.api_sig) or empty(md.artist) or empty(md.title) then
+        logger.error("Can't nowPlaying: empty value among required values:",
+            'sig=', api_params.api_sig, ',artist=', md.artist, ',title=', md.title)
+        return
+    end
+    local res = curl_post(SCR_URL, table_to_urlencoded(api_params))
+    if IS_FILELOG_SCR and res.status == 0 then filelog_scr(md) end
+end
 
 ---@param timeout number
 function scrobble(timeout)
@@ -209,7 +240,7 @@ function scrobble(timeout)
                 ['artist[0]'] = repl_api_broken_chars(md.artist),
                 ['timestamp[0]'] = os.time() - timeout,
                 ['track[0]'] = repl_api_broken_chars(md.title),
-				['albumArtist[0]'] = repl_api_broken_chars(md.albumArtist),
+                ['albumArtist[0]'] = repl_api_broken_chars(md.albumArtist),
     }
     api_params.api_sig = gen_sig(API_METHODS.scrobble, '', api_params)
     if empty(api_params.api_sig) or empty(md.artist) or empty(md.title) then
@@ -236,6 +267,7 @@ end
 
 function set_scrobble_timer()
     if SCR_FORMATS[file_ext()] then
+        nowPlaying()
         local timeout = calc_scr_timeout()
         timer = mp.add_timeout(timeout, function() scrobble(timeout) end)
         if is_paused then
