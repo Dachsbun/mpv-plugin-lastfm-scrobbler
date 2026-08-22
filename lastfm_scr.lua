@@ -134,34 +134,27 @@ end
 
 
 ---@param method string
----@param token string
 ---@param params table
 ---@return string?
-function gen_sig(method, token, params)
-    local sig = 'api_key' .. K
-
-    if method == API_METHODS.scrobble then
-        sig =
-            'albumArtist[0]' .. params['albumArtist[0]'] ..
-            'album[0]' .. params['album[0]'] ..
-            sig ..
-            'artist[0]' .. params['artist[0]'] ..
-            'method' .. method ..
-            'sk' .. sk ..
-            'timestamp[0]' .. params['timestamp[0]'] ..
-            'track[0]' .. params['track[0]']
-    elseif method == API_METHODS.nowPlaying then
-        sig =
-            'album' .. params['album'] ..
-            'albumArtist' .. params['albumArtist'] ..
-            sig ..
-            'artist' .. params['artist'] ..
-            'method' .. method ..
-            'sk' .. sk ..
-            'track' .. params['track']
-    else
+function gen_sig(method, params)
+    local sig = ''
+    --validate api method
+    local valid_method = false
+    for k,v in pairs(API_METHODS) do
+        if method == v then
+            logger.debug('Valid method:', method)
+            valid_method = true
+        end
+    end
+    if not valid_method then
         logger.error('Incorrect method:', method)
         return
+    end
+    --go through params in alpha sorted order and append to sig
+    local ordered_params = table_alpha_sorted(params)
+    for i,k in ipairs(ordered_params) do
+        sig = sig .. k .. params[k]
+        logger.debug(k, ": ", params[k])
     end
     sig = sig .. S
     logger.debug('Generated sig: ', sig)
@@ -185,21 +178,22 @@ function api_fetch_session(token)
     return curl_get(url).stdout
 end
 
-function table_to_urlencoded(table)
+function table_to_urlencoded(t)
     local s = ''
-    for k, v in pairs(table) do
+    for k, v in pairs(t) do
         s = s .. k .. '=' .. v .. '&'
     end
     return s:sub(0, s:len() - 1)
 end
 
-function table_alpha_sorted(table)
+function table_alpha_sorted(t)
     local i = 1
     local sorted_table = {}
-    for k,v in pairs(table) do
+    for k,v in pairs(t) do
         sorted_table[i] = k
         i = i + 1
     end
+    table.sort(sorted_table)
     return sorted_table
 end
 
@@ -218,7 +212,7 @@ function file_ext() return filename():match('%.(%w+)$') end
 function nowPlaying()
     -- basically copied from scrobble function, updates nowPlaying
     local md = extract_playmetadata()
-	local api_params = {
+    local api_params = {
                 ['album'] = repl_api_broken_chars(md.album),
                 api_key = K,
                 method = API_METHODS.nowPlaying,
@@ -227,7 +221,7 @@ function nowPlaying()
                 ['track'] = repl_api_broken_chars(md.title),
                 ['albumArtist'] = repl_api_broken_chars(md.albumArtist),
     }
-    api_params.api_sig = gen_sig(API_METHODS.nowPlaying, '', api_params)
+    api_params.api_sig = gen_sig(API_METHODS.nowPlaying, api_params)
     if empty(api_params.api_sig) or empty(md.artist) or empty(md.title) then
         logger.error("Can't nowPlaying: empty value among required values:",
             'sig=', api_params.api_sig, ',artist=', md.artist, ',title=', md.title)
@@ -250,7 +244,7 @@ function scrobble(timeout)
                 ['track[0]'] = repl_api_broken_chars(md.title),
                 ['albumArtist[0]'] = repl_api_broken_chars(md.albumArtist),
     }
-    api_params.api_sig = gen_sig(API_METHODS.scrobble, '', api_params)
+    api_params.api_sig = gen_sig(API_METHODS.scrobble, api_params)
     if empty(api_params.api_sig) or empty(md.artist) or empty(md.title) then
         logger.error("Can't scrobble: empty value among required values:",
             'sig=', api_params.api_sig, ',artist=', md.artist, ',title=', md.title)
@@ -307,11 +301,11 @@ function on_file_ended(ev)
 end
 
 function on_pause(_name, is_paused_ev)
-	if is_paused_ev == true then
-	    is_paused = true
-	    if timer then timer:stop() end
+    if is_paused_ev == true then
+        is_paused = true
+        if timer then timer:stop() end
     else
-	    is_paused = false
+        is_paused = false
         if timer then timer:resume() end
     end
 end
