@@ -269,11 +269,12 @@ end
 
 function set_scrobble_timer()
     if SCR_FORMATS[file_ext()] then
-        nowPlaying()
         local timeout = calc_scr_timeout()
         timer = mp.add_timeout(timeout, function() scrobble(timeout) end)
+        playing_timeout = mp.add_timeout(5, function() nowPlaying() end)
         if is_paused then
             timer:stop()
+            playing_timeout:stop()
         end
     else
         logger.debug('Extension "' .. file_ext() .. '" is not set for scrobbling')
