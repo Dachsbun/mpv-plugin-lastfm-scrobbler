@@ -285,6 +285,7 @@ function clear_timer()
     if timer then
         logger.debug('clearing the timer')
         timer:kill()
+        playing_timeout:kill()
     end
 end
 
