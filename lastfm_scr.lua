@@ -209,7 +209,7 @@ end
 function filename() return mp.get_property('filename') end
 function file_ext() return filename():match('%.(%w+)$') end
 
-function nowPlaying()
+function now_playing()
     -- basically copied from scrobble function, updates nowPlaying
     local md = extract_playmetadata()
     local api_params = {
@@ -271,7 +271,7 @@ function set_scrobble_timer()
     if SCR_FORMATS[file_ext()] then
         local timeout = calc_scr_timeout()
         timer = mp.add_timeout(timeout, function() scrobble(timeout) end)
-        playing_timeout = mp.add_timeout(5, function() nowPlaying() end)
+        playing_timeout = mp.add_timeout(5, function() now_playing() end)
         if is_paused then
             timer:stop()
             playing_timeout:stop()
