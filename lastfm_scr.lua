@@ -195,6 +195,16 @@ function table_to_urlencoded(table)
     return s:sub(0, s:len() - 1)
 end
 
+function table_alpha_sorted(table)
+    local i = 1
+    local sorted_table = {}
+    for k,v in pairs(table) do
+        sorted_table[i] = k
+        i = i + 1
+    end
+    return sorted_table
+end
+
 function extract_playmetadata()
     return {
         artist = mp.get_property("metadata/by-key/artist") or '',
