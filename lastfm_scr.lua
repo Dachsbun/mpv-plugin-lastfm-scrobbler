@@ -140,9 +140,7 @@ end
 function gen_sig(method, token, params)
     local sig = 'api_key' .. K
 
-    if method == API_METHODS.getSession then
-        sig = sig .. 'method' .. method .. 'token' .. token
-    elseif method == API_METHODS.scrobble then
+    if method == API_METHODS.scrobble then
         sig =
             'albumArtist[0]' .. params['albumArtist[0]'] ..
             'album[0]' .. params['album[0]'] ..
@@ -181,8 +179,8 @@ function new_session_notify_user(token)
     run_subpr_async({ 'xdg-open', url })
 end
 
-function api_fetch_session(token, sig)
-    local url = URL_K .. '&method=' .. API_METHODS.getSession .. '&token=' .. token .. '&api_sig=' .. sig
+function api_fetch_session(token)
+    local url = URL_K .. '&method=' .. API_METHODS.getSession .. '&token=' .. token
     logger.debug('Requesting URL:', url)
     return curl_get(url).stdout
 end
@@ -325,11 +323,11 @@ function init_mpv_handlers()
     mp.observe_property("pause", "bool", on_pause)
 end
 
-function wait_session_approve(token, sig)
+function wait_session_approve(token)
     local times = 15
 
     function fetch_creds()
-        local session_resp = api_fetch_session(token, sig)
+        local session_resp = api_fetch_session(token)
         if session_resp then
             uname = session_resp:match('name' .. JSON_VALUE_RE)
             sk = session_resp:match('key' .. JSON_VALUE_RE)
@@ -386,15 +384,8 @@ function setup_userdata()
         logger.error('token is nil')
         return
     end
-
-    local sig = gen_sig(API_METHODS.getSession, token, {})
-    if not sig then
-        logger.error('sig is nil')
-        return
-    end
-
     new_session_notify_user(token)
-    wait_session_approve(token, sig)
+    wait_session_approve(token)
     if not sk then
         logger.error('sk is nil')
         return
