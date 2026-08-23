@@ -21,8 +21,10 @@ CONF_FILENAME = '.' .. PLUGIN_NAME .. '.conf'
 TMP_FILEPATH = '/tmp/' .. PLUGIN_NAME .. '.temp'
 CONF_FILEPATH = SCRIPTS_DIR .. '/'  .. CONF_FILENAME
 local SCR_MIN = 20
+local IS_SEND_NOWPLAYING = true
+local NOWPLAYING_STATUS_TIMEOUT = 5
 local JSON_VALUE_RE = '":%s?"([^"]+)'
-local uname, sk, timer
+local uname, sk, scrobble_timer, nowplaying_timer
 local is_paused = false
 
 local IS_FILELOG_SCR = false
@@ -142,7 +144,7 @@ function gen_sig(params)
         sig = sig .. k .. params[k]
     end
     sig = sig .. S
-    logger.debug('Generated sig: ', sig)
+    logger.debug('Method:', params.method, 'generated sig:', sig)
     sig = trim(str_to_md5(sig))
     logger.debug('Hashed sig:', sig)
     return sig
@@ -252,48 +254,57 @@ function calc_scr_timeout()
     end
 end
 
-function set_scrobble_timer()
-    if SCR_FORMATS[file_ext()] then
-        local timeout = calc_scr_timeout()
-        timer = mp.add_timeout(timeout, function() scrobble(timeout) end)
-        playing_timeout = mp.add_timeout(5, function() now_playing() end)
-        if is_paused then
-            timer:stop()
-            playing_timeout:stop()
-        end
-    else
-        logger.debug('Extension "' .. file_ext() .. '" is not set for scrobbling')
+function set_nowplaying_timer()
+    if IS_SEND_NOWPLAYING then
+        nowplaying_timer = mp.add_timeout(NOWPLAYING_STATUS_TIMEOUT, now_playing)
+        if is_paused then nowplaying_timer:stop() end
     end
 end
 
-function clear_timer()
-    if timer then
-        logger.debug('clearing the timer')
-        timer:kill()
-        playing_timeout:kill()
+function set_scrobble_timer()
+    local timeout = calc_scr_timeout()
+    scrobble_timer = mp.add_timeout(timeout, function() scrobble(timeout) end)
+    if is_paused then scrobble_timer:stop() end
+end
+
+function clear_timers()
+    if scrobble_timer then
+        logger.debug('clearing scrobble_timer')
+        scrobble_timer:kill()
+    end
+    if nowplaying_timer then
+        logger.debug('clearing nowplaying_timer')
+        nowplaying_timer:kill()
     end
 end
 
 function on_file_loaded(_ev)
     logger.debug('file loaded event')
-    set_scrobble_timer()
+    if SCR_FORMATS[file_ext()] then
+        set_scrobble_timer()
+        set_nowplaying_timer()
+    else
+        logger.debug('Extension "' .. file_ext() .. '" is not set for scrobbling')
+    end
 end
 
 function on_file_ended(ev)
     logger.debug('file ended event')
     if ev.reason ~= 'redirect' then
         -- todo: why redirect is sent when playing a file?
-        clear_timer()
+        clear_timers()
     end
 end
 
 function on_pause(_name, is_paused_ev)
     if is_paused_ev == true then
         is_paused = true
-        if timer then timer:stop() end
+        if scrobble_timer then scrobble_timer:stop() end
+        if nowplaying_timer then nowplaying_timer:stop() end
     else
         is_paused = false
-        if timer then timer:resume() end
+        if scrobble_timer then scrobble_timer:resume() end
+        if nowplaying_timer then nowplaying_timer:resume() end
     end
 end
 
