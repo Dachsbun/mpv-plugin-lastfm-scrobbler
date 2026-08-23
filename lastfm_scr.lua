@@ -1,7 +1,7 @@
 --[[
 mpv-lastfm-scrobbler
-version 0.6
-https://github.com/tsvtt/mpv-lastfm-scrobbler
+version 0.7
+https://github.com/tsvtt/mpv-plugin-lastfm-scrobbler
 ]]
 
 mp = require('mp')
