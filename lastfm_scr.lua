@@ -1,7 +1,7 @@
 --[[
 mpv-lastfm-scrobbler
-version 0.6
-https://github.com/tsvtt/mpv-lastfm-scrobbler
+version 0.7
+https://github.com/tsvtt/mpv-plugin-lastfm-scrobbler
 ]]
 
 mp = require('mp')
@@ -21,8 +21,10 @@ CONF_FILENAME = '.' .. PLUGIN_NAME .. '.conf'
 TMP_FILEPATH = '/tmp/' .. PLUGIN_NAME .. '.temp'
 CONF_FILEPATH = SCRIPTS_DIR .. '/'  .. CONF_FILENAME
 local SCR_MIN = 20
+local IS_SEND_NOWPLAYING = true
+local NOWPLAYING_STATUS_TIMEOUT = 5
 local JSON_VALUE_RE = '":%s?"([^"]+)'
-local uname, sk, timer
+local uname, sk, scrobble_timer, nowplaying_timer
 local is_paused = false
 
 local IS_FILELOG_SCR = false
@@ -133,40 +135,16 @@ function repl_api_broken_chars(str)
 end
 
 
----@param method string
----@param token string
 ---@param params table
 ---@return string?
-function gen_sig(method, token, params)
-    local sig = 'api_key' .. K
-
-    if method == API_METHODS.getSession then
-        sig = sig .. 'method' .. method .. 'token' .. token
-    elseif method == API_METHODS.scrobble then
-        sig =
-            'albumArtist[0]' .. params['albumArtist[0]'] ..
-            'album[0]' .. params['album[0]'] ..
-            sig ..
-            'artist[0]' .. params['artist[0]'] ..
-            'method' .. method ..
-            'sk' .. sk ..
-            'timestamp[0]' .. params['timestamp[0]'] ..
-            'track[0]' .. params['track[0]']
-    elseif method == API_METHODS.nowPlaying then
-        sig =
-            'album' .. params['album'] ..
-            'albumArtist' .. params['albumArtist'] ..
-            sig ..
-            'artist' .. params['artist'] ..
-            'method' .. method ..
-            'sk' .. sk ..
-            'track' .. params['track']
-    else
-        logger.error('Incorrect method:', method)
-        return
+function gen_sig(params)
+    local sig = ''
+    local ordered_params = table_alpha_sorted(params)
+    for _i, k in ipairs(ordered_params) do
+        sig = sig .. k .. params[k]
     end
     sig = sig .. S
-    logger.debug('Generated sig: ', sig)
+    logger.debug('Method:', params.method, 'generated sig:', sig)
     sig = trim(str_to_md5(sig))
     logger.debug('Hashed sig:', sig)
     return sig
@@ -187,12 +165,25 @@ function api_fetch_session(token, sig)
     return curl_get(url).stdout
 end
 
-function table_to_urlencoded(table)
+function table_to_urlencoded(t)
     local s = ''
-    for k, v in pairs(table) do
+    for k, v in pairs(t) do
         s = s .. k .. '=' .. v .. '&'
     end
     return s:sub(0, s:len() - 1)
+end
+
+---@param params table
+---@return table
+function table_alpha_sorted(params)
+    local i = 1
+    local sorted_table = {}
+    for k, _v in pairs(params) do
+        sorted_table[i] = k
+        i = i + 1
+    end
+    table.sort(sorted_table)
+    return sorted_table
 end
 
 function extract_playmetadata()
@@ -207,26 +198,24 @@ end
 function filename() return mp.get_property('filename') end
 function file_ext() return filename():match('%.(%w+)$') end
 
-function nowPlaying()
-    -- basically copied from scrobble function, updates nowPlaying
+function now_playing()
     local md = extract_playmetadata()
-	local api_params = {
-                ['album'] = repl_api_broken_chars(md.album),
+    local api_params = {
+                album = repl_api_broken_chars(md.album),
                 api_key = K,
                 method = API_METHODS.nowPlaying,
                 sk = sk,
-                ['artist'] = repl_api_broken_chars(md.artist),
-                ['track'] = repl_api_broken_chars(md.title),
-                ['albumArtist'] = repl_api_broken_chars(md.albumArtist),
+                artist = repl_api_broken_chars(md.artist),
+                track = repl_api_broken_chars(md.title),
+                albumArtist = repl_api_broken_chars(md.albumArtist),
     }
-    api_params.api_sig = gen_sig(API_METHODS.nowPlaying, '', api_params)
+    api_params.api_sig = gen_sig(api_params)
     if empty(api_params.api_sig) or empty(md.artist) or empty(md.title) then
         logger.error("Can't nowPlaying: empty value among required values:",
             'sig=', api_params.api_sig, ',artist=', md.artist, ',title=', md.title)
         return
     end
-    local res = curl_post(SCR_URL, table_to_urlencoded(api_params))
-    if IS_FILELOG_SCR and res.status == 0 then filelog_scr(md) end
+    curl_post(SCR_URL, table_to_urlencoded(api_params))
 end
 
 ---@param timeout number
@@ -242,7 +231,7 @@ function scrobble(timeout)
                 ['track[0]'] = repl_api_broken_chars(md.title),
                 ['albumArtist[0]'] = repl_api_broken_chars(md.albumArtist),
     }
-    api_params.api_sig = gen_sig(API_METHODS.scrobble, '', api_params)
+    api_params.api_sig = gen_sig(api_params)
     if empty(api_params.api_sig) or empty(md.artist) or empty(md.title) then
         logger.error("Can't scrobble: empty value among required values:",
             'sig=', api_params.api_sig, ',artist=', md.artist, ',title=', md.title)
@@ -265,46 +254,57 @@ function calc_scr_timeout()
     end
 end
 
-function set_scrobble_timer()
-    if SCR_FORMATS[file_ext()] then
-        nowPlaying()
-        local timeout = calc_scr_timeout()
-        timer = mp.add_timeout(timeout, function() scrobble(timeout) end)
-        if is_paused then
-            timer:stop()
-        end
-    else
-        logger.debug('Extension "' .. file_ext() .. '" is not set for scrobbling')
+function set_nowplaying_timer()
+    if IS_SEND_NOWPLAYING then
+        nowplaying_timer = mp.add_timeout(NOWPLAYING_STATUS_TIMEOUT, now_playing)
+        if is_paused then nowplaying_timer:stop() end
     end
 end
 
-function clear_timer()
-    if timer then
-        logger.debug('clearing the timer')
-        timer:kill()
+function set_scrobble_timer()
+    local timeout = calc_scr_timeout()
+    scrobble_timer = mp.add_timeout(timeout, function() scrobble(timeout) end)
+    if is_paused then scrobble_timer:stop() end
+end
+
+function clear_timers()
+    if scrobble_timer then
+        logger.debug('clearing scrobble_timer')
+        scrobble_timer:kill()
+    end
+    if nowplaying_timer then
+        logger.debug('clearing nowplaying_timer')
+        nowplaying_timer:kill()
     end
 end
 
 function on_file_loaded(_ev)
     logger.debug('file loaded event')
-    set_scrobble_timer()
+    if SCR_FORMATS[file_ext()] then
+        set_scrobble_timer()
+        set_nowplaying_timer()
+    else
+        logger.debug('Extension "' .. file_ext() .. '" is not set for scrobbling')
+    end
 end
 
 function on_file_ended(ev)
     logger.debug('file ended event')
     if ev.reason ~= 'redirect' then
         -- todo: why redirect is sent when playing a file?
-        clear_timer()
+        clear_timers()
     end
 end
 
 function on_pause(_name, is_paused_ev)
-	if is_paused_ev == true then
-	    is_paused = true
-	    if timer then timer:stop() end
+    if is_paused_ev == true then
+        is_paused = true
+        if scrobble_timer then scrobble_timer:stop() end
+        if nowplaying_timer then nowplaying_timer:stop() end
     else
-	    is_paused = false
-        if timer then timer:resume() end
+        is_paused = false
+        if scrobble_timer then scrobble_timer:resume() end
+        if nowplaying_timer then nowplaying_timer:resume() end
     end
 end
 
@@ -377,7 +377,12 @@ function setup_userdata()
         return
     end
 
-    local sig = gen_sig(API_METHODS.getSession, token, {})
+    local params = {
+        token = token,
+        method = API_METHODS.getSession,
+        api_key = K,
+    }
+    local sig = gen_sig(params)
     if not sig then
         logger.error('sig is nil')
         return
