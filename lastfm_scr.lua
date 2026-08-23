@@ -133,28 +133,13 @@ function repl_api_broken_chars(str)
 end
 
 
----@param method string
 ---@param params table
 ---@return string?
-function gen_sig(method, params)
+function gen_sig(params)
     local sig = ''
-    --validate api method
-    local valid_method = false
-    for k,v in pairs(API_METHODS) do
-        if method == v then
-            logger.debug('Valid method:', method)
-            valid_method = true
-        end
-    end
-    if not valid_method then
-        logger.error('Incorrect method:', method)
-        return
-    end
-    --go through params in alpha sorted order and append to sig
     local ordered_params = table_alpha_sorted(params)
-    for i,k in ipairs(ordered_params) do
+    for _i, k in ipairs(ordered_params) do
         sig = sig .. k .. params[k]
-        logger.debug(k, ": ", params[k])
     end
     sig = sig .. S
     logger.debug('Generated sig: ', sig)
@@ -186,10 +171,12 @@ function table_to_urlencoded(t)
     return s:sub(0, s:len() - 1)
 end
 
-function table_alpha_sorted(t)
+---@param params table
+---@return table
+function table_alpha_sorted(params)
     local i = 1
     local sorted_table = {}
-    for k,v in pairs(t) do
+    for k, _v in pairs(params) do
         sorted_table[i] = k
         i = i + 1
     end
@@ -210,7 +197,6 @@ function filename() return mp.get_property('filename') end
 function file_ext() return filename():match('%.(%w+)$') end
 
 function now_playing()
-    -- basically copied from scrobble function, updates nowPlaying
     local md = extract_playmetadata()
     local api_params = {
                 album = repl_api_broken_chars(md.album),
@@ -221,14 +207,13 @@ function now_playing()
                 track = repl_api_broken_chars(md.title),
                 albumArtist = repl_api_broken_chars(md.albumArtist),
     }
-    api_params.api_sig = gen_sig(API_METHODS.nowPlaying, api_params)
+    api_params.api_sig = gen_sig(api_params)
     if empty(api_params.api_sig) or empty(md.artist) or empty(md.title) then
         logger.error("Can't nowPlaying: empty value among required values:",
             'sig=', api_params.api_sig, ',artist=', md.artist, ',title=', md.title)
         return
     end
-    local res = curl_post(SCR_URL, table_to_urlencoded(api_params))
-    if IS_FILELOG_SCR and res.status == 0 then filelog_scr(md) end
+    curl_post(SCR_URL, table_to_urlencoded(api_params))
 end
 
 ---@param timeout number
@@ -244,7 +229,7 @@ function scrobble(timeout)
                 ['track[0]'] = repl_api_broken_chars(md.title),
                 ['albumArtist[0]'] = repl_api_broken_chars(md.albumArtist),
     }
-    api_params.api_sig = gen_sig(API_METHODS.scrobble, api_params)
+    api_params.api_sig = gen_sig(api_params)
     if empty(api_params.api_sig) or empty(md.artist) or empty(md.title) then
         logger.error("Can't scrobble: empty value among required values:",
             'sig=', api_params.api_sig, ',artist=', md.artist, ',title=', md.title)
@@ -386,7 +371,7 @@ function setup_userdata()
         method = API_METHODS.getSession,
         api_key = K,
     }
-    local sig = gen_sig(API_METHODS.getSession, params)
+    local sig = gen_sig(params)
     if not sig then
         logger.error('sig is nil')
         return
