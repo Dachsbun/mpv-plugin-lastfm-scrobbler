@@ -172,8 +172,8 @@ function new_session_notify_user(token)
     run_subpr_async({ 'xdg-open', url })
 end
 
-function api_fetch_session(token)
-    local url = URL_K .. '&method=' .. API_METHODS.getSession .. '&token=' .. token
+function api_fetch_session(token, sig)
+    local url = URL_K .. '&method=' .. API_METHODS.getSession .. '&token=' .. token .. '&api_sig=' .. sig
     logger.debug('Requesting URL:', url)
     return curl_get(url).stdout
 end
@@ -213,13 +213,13 @@ function now_playing()
     -- basically copied from scrobble function, updates nowPlaying
     local md = extract_playmetadata()
     local api_params = {
-                ['album'] = repl_api_broken_chars(md.album),
+                album = repl_api_broken_chars(md.album),
                 api_key = K,
                 method = API_METHODS.nowPlaying,
                 sk = sk,
-                ['artist'] = repl_api_broken_chars(md.artist),
-                ['track'] = repl_api_broken_chars(md.title),
-                ['albumArtist'] = repl_api_broken_chars(md.albumArtist),
+                artist = repl_api_broken_chars(md.artist),
+                track = repl_api_broken_chars(md.title),
+                albumArtist = repl_api_broken_chars(md.albumArtist),
     }
     api_params.api_sig = gen_sig(API_METHODS.nowPlaying, api_params)
     if empty(api_params.api_sig) or empty(md.artist) or empty(md.title) then
@@ -319,11 +319,11 @@ function init_mpv_handlers()
     mp.observe_property("pause", "bool", on_pause)
 end
 
-function wait_session_approve(token)
+function wait_session_approve(token, sig)
     local times = 15
 
     function fetch_creds()
-        local session_resp = api_fetch_session(token)
+        local session_resp = api_fetch_session(token, sig)
         if session_resp then
             uname = session_resp:match('name' .. JSON_VALUE_RE)
             sk = session_resp:match('key' .. JSON_VALUE_RE)
@@ -380,8 +380,20 @@ function setup_userdata()
         logger.error('token is nil')
         return
     end
+
+    local params = {
+        token = token,
+        method = API_METHODS.getSession,
+        api_key = K,
+    }
+    local sig = gen_sig(API_METHODS.getSession, params)
+    if not sig then
+        logger.error('sig is nil')
+        return
+    end
+
     new_session_notify_user(token)
-    wait_session_approve(token)
+    wait_session_approve(token, sig)
     if not sk then
         logger.error('sk is nil')
         return
